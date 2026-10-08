@@ -1,0 +1,14 @@
+# Secrets and keys: never commit
+.streamlit/secrets.toml
+.env
+*.env
+*.p8
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.claude/

@@ -1,0 +1,5 @@
+streamlit==1.65.0
+altair==6.3.0
+pandas==2.3.3
+snowflake-connector-python==4.7.4
+cryptography==50.0.1
