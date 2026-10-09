@@ -3,11 +3,18 @@
 Streamlit rebuild of the "GSC SEO Dashboard" Power BI report. Every number comes straight from the detail table
 `STG_SILVER_DB.ANALYTICS.GSC_DB_TABLE`; the pre-aggregated `GSC_URL_DAILY_AGG` / `GSC_QUERY_DAILY_AGG` are not used.
 
-- **Global filters (both pages)**: Date, Bucket, Acute / Chronic, Generic / Branded medicines, URL contains.
+- **Global filters (both pages)**: Date, Compare with another period, Bucket, Acute / Chronic, Generic / Branded
+  medicines, URL contains. Press **Apply filters** to refresh; nothing is queried while you are still picking.
+- **Compare with another period**: tick it and choose a second date range. KPI cards show the change, charts overlay
+  the two periods by day of period, and tables add compare and change columns. Both periods are read from
+  Snowflake in one pass. Use periods of equal length for a like-for-like comparison.
 - **URL page**: KPIs (absolute numbers), URL table, clicks / impressions / avg position trends.
 - **Query page**: one row per query and URL with clicks, impressions, CTR and avg position. Tables: Query Wise
-  Bucketing, BRAND, NON-BRAND, GENERIC, BRANDED, OTHER; branded / non-branded and generic / branded trends.
+  Bucketing, BRAND, NON-BRAND; branded / non-branded and generic / branded trends. The medicine type is the global
+  filter, so it is not repeated as a table option.
 - Every table ends with a bold TOTAL row that sums all rows matching the filters.
+- Cost: results are cached 6 hours, table paging runs as a Streamlit fragment (no full-page redraw), and the
+  filters apply only on the Apply button, so Snowflake compute is used once per intended refresh.
 - Tables are paged server-side and can be downloaded in batches (CSV) or, up to 1M rows, as one zip. Downloads
   contain data rows only (no TOTAL row).
 

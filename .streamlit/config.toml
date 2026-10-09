@@ -3,3 +3,14 @@ gatherUsageStats = false
 
 [server]
 headless = true
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#0F6E56"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F2F7F5"
+textColor = "#1F2933"
+font = "sans serif"

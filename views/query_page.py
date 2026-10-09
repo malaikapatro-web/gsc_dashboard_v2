@@ -1,18 +1,26 @@
-import altair as alt
 import pandas as pd
 import streamlit as st
 
 from db import DETAIL_TABLE, GB_EXPR, materialize, run_query
-from filters import date_range, global_where
-from ui import paged_table
-
-st.title("GSC SEO Dashboard - Query")
+from filters import compare_range, date_range, date_where, global_where, period_sums
+from ui import compare_sorts, length_note, metric_cols, metric_config, page_header, paged_table, trend_chart
 
 rng = date_range()
 if rng is None:
-    st.info("Pick an end date.")
+    st.info("Pick an end date, then press Apply filters.")
     st.stop()
 start, end = rng
+
+cmp_rng = compare_range()
+cmp = cmp_rng is not None
+cs, ce = cmp_rng if cmp else (None, None)
+
+page_header("GSC SEO Dashboard: Query performance",
+            f"TrueMeds Growth Marketing &middot; Google Search Console impressions and clicks &middot; "
+            f"{start} to {end}" + (f" vs {cs} to {ce}" if cmp else ""))
+
+if cmp:
+    length_note(start, end, cs, ce)
 
 with st.sidebar:
     st.subheader("Query page filters")
@@ -35,6 +43,17 @@ def where(params: dict, p: str = "d.") -> str:
     return sql
 
 
+def sum_cols() -> str:
+    cols = "SUM(clicks) AS clicks, SUM(impressions) AS impressions, SUM(sum_position) AS sum_position"
+    return cols + (", SUM(c_clicks) AS c_clicks, SUM(c_impressions) AS c_impressions, "
+                   "SUM(c_sum_position) AS c_sum_position" if cmp else "")
+
+
+def plain_cols() -> str:
+    cols = "clicks, impressions, sum_position"
+    return cols + (", c_clicks, c_impressions, c_sum_position" if cmp else "")
+
+
 TAIL_LABEL = "Long-tail (low volume)"
 if group_tail:
     # Same rule as the pipeline: total impressions per query over every loaded day, threshold 10.
@@ -50,17 +69,16 @@ else:
     QUERY_EXPR = "COALESCE(d.query, '(anonymized queries)')"
     SOURCE = f"{DETAIL_TABLE} d"
 
-# Base: one row per (query, URL). bucket, brand and medicine type follow from the URL / query text.
-# Anonymized queries (no text in GSC) are kept as one labelled row per URL.
-bp = {"s": start, "e": end}
+# Base: one row per (query, URL). bucket and brand follow from the URL / query text. Anonymized queries (no text
+# in GSC) are kept as one labelled row per URL. With a comparison period both periods are summed in one pass.
+bp = {"s": start, "e": end, **({"cs": cs, "ce": ce} if cmp else {})}
 base = materialize(
     "QBASE",
     f"""SELECT {QUERY_EXPR} AS query, d.url AS url, d.bucket AS bucket, d.brand_non_brand AS brand_non_brand,
-               {GB_EXPR} AS gb, SUM(d.clicks) AS clicks, SUM(d.impressions) AS impressions,
-               SUM(d.sum_position) AS sum_position
+               {period_sums(cmp, "d.")}
         FROM {SOURCE}
-        WHERE d.data_date BETWEEN %(s)s AND %(e)s {where(bp)}
-        GROUP BY 1, 2, 3, 4, 5""",
+        WHERE {date_where(cmp, "d.")} {where(bp)}
+        GROUP BY 1, 2, 3, 4""",
     bp,
 )
 
@@ -68,10 +86,7 @@ CFG = {
     "query": st.column_config.TextColumn("Query", width="large"),
     "url": st.column_config.LinkColumn("URL", width="large"),
     "bucket": "Bucket",
-    "clicks": st.column_config.NumberColumn("Clicks", format="%d"),
-    "impressions": st.column_config.NumberColumn("Impressions", format="%d"),
-    "ctr": st.column_config.NumberColumn("CTR", format="percent"),
-    "avg_position": st.column_config.NumberColumn("Avg Position", format="%.2f"),
+    **metric_config(cmp),
 }
 SORTS = {
     "Clicks (high to low)": "clicks DESC",
@@ -80,64 +95,57 @@ SORTS = {
     "Avg Position (best first)": "avg_position ASC NULLS LAST",
     "Query (A to Z)": "query ASC",
     "URL (A to Z)": "url ASC",
+    **compare_sorts(cmp),
 }
-METRICS = """clicks, impressions, DIV0NULL(clicks, impressions) AS ctr,
-             DIV0NULL(sum_position, impressions) + 1 AS avg_position"""
+METRICS = metric_cols(cmp)
 
 
 def view_table(prefix: str, condition: str) -> str:
     """Rows of `base` that match condition, one per (query, URL)."""
     if group_tail:  # long-tail labels can repeat per URL (brand and non-brand), so add them up
         return materialize(
-            prefix,
-            f"""SELECT query, url, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
-                       SUM(sum_position) AS sum_position
-                FROM {base} WHERE {condition} GROUP BY query, url""",
+            prefix, f"SELECT query, url, {sum_cols()} FROM {base} WHERE {condition} GROUP BY query, url")
+    return materialize(prefix, f"SELECT query, url, {plain_cols()} FROM {base} WHERE {condition}")
+
+
+# BRAND / NON-BRAND = does the search query mention TrueMeds. The medicine type (Generic / Branded) is the
+# global filter in the left sidebar, so it is not repeated here.
+with st.container(border=True):
+    view = st.radio("Table", ["Query Wise Bucketing", "BRAND", "NON-BRAND"], horizontal=True, key="q_view")
+    st.subheader(view)
+    if view == "Query Wise Bucketing":
+        cond = "LEN(TRIM(query)) >= 4" if hide_short else "TRUE"
+        if group_tail:
+            tbl = materialize(
+                "QBUCKET",
+                f"SELECT query, url, bucket, {sum_cols()} FROM {base} WHERE {cond} GROUP BY query, url, bucket",
+            )
+        elif hide_short:
+            tbl = materialize("QSHORT", f"SELECT * FROM {base} WHERE {cond}")
+        else:
+            tbl = base
+        paged_table(
+            tbl,
+            cols_sql=f"query, url, bucket, {METRICS}",
+            sort_options=SORTS, tiebreak="query, url", col_config=CFG,
+            key="qb", export_name="gsc_queries_bucketing", cmp=cmp,
         )
-    return materialize(prefix, f"SELECT query, url, clicks, impressions, sum_position FROM {base} WHERE {condition}")
-
-
-# BRAND / NON-BRAND = does the search query mention TrueMeds. Generic / Branded = the medicine type of the
-# page that earned the impression (from MEDICINE_MASTER); "Other pages" are URLs with no medicine match.
-GB_VIEWS = {"GENERIC medicines": "GENERIC", "BRANDED medicines": "BRANDED", "OTHER pages (no medicine)": "(BLANK)"}
-view = st.radio("Table", ["Query Wise Bucketing", "BRAND", "NON-BRAND", *GB_VIEWS], horizontal=True, key="q_view")
-st.subheader(view)
-
-if view == "Query Wise Bucketing":
-    cond = "LEN(TRIM(query)) >= 4" if hide_short else "TRUE"
-    if group_tail:
-        tbl = materialize(
-            "QBUCKET",
-            f"""SELECT query, url, bucket, SUM(clicks) AS clicks, SUM(impressions) AS impressions,
-                       SUM(sum_position) AS sum_position
-                FROM {base} WHERE {cond} GROUP BY query, url, bucket""",
-        )
-    elif hide_short:
-        tbl = materialize("QSHORT", f"SELECT * FROM {base} WHERE {cond}")
     else:
-        tbl = base
-    paged_table(
-        tbl,
-        cols_sql=f"query, url, bucket, {METRICS}",
-        sort_options=SORTS, tiebreak="query, url", col_config=CFG,
-        key="qb", export_name="gsc_queries_bucketing",
-    )
-else:
-    cond = f"gb = '{GB_VIEWS[view]}'" if view in GB_VIEWS else f"brand_non_brand = '{view}'"
-    paged_table(
-        view_table("QVIEW", cond),
-        cols_sql=f"query, url, {METRICS}",
-        sort_options=SORTS, tiebreak="query, url", col_config=CFG,
-        key=f"qbr_{view}", export_name="gsc_queries_" + view.split()[0].lower(),
-    )
+        cond = f"brand_non_brand = '{view}'"
+        paged_table(
+            view_table("QVIEW", cond),
+            cols_sql=f"query, url, {METRICS}",
+            sort_options=SORTS, tiebreak="query, url", col_config=CFG,
+            key=f"qbr_{view}", export_name="gsc_queries_" + view.split()[0].lower(), cmp=cmp,
+        )
 
 # Trends always come straight from the detail table, with the same filters as the tables above.
-dp = {"s": start, "e": end}
+dp = {"s": start, "e": end, **({"cs": cs, "ce": ce} if cmp else {})}
 daily = run_query(
     f"""SELECT data_date, brand_non_brand, {GB_EXPR} AS gb, SUM(clicks) AS clicks,
                SUM(impressions) AS impressions, SUM(sum_position) AS sp
         FROM {DETAIL_TABLE}
-        WHERE data_date BETWEEN %(s)s AND %(e)s {where(dp, "")}
+        WHERE {date_where(cmp)} {where(dp, "")}
         GROUP BY data_date, brand_non_brand, {GB_EXPR} ORDER BY data_date""",
     dp,
 )
@@ -147,38 +155,30 @@ for c in ("clicks", "impressions", "sp"):
 
 
 def series(col, label):
-    d = daily[daily[col] == label].groupby("data_date", as_index=False)[["clicks", "impressions", "sp"]].sum()
-    d["avg_position"] = d["sp"] / d["impressions"].where(d["impressions"] > 0) + 1  # same formula as the tables
-    return d
+    """Daily totals for one group, as (selected period, comparison period or None)."""
+    d = daily[daily[col] == label]
+    day = d["data_date"].dt.date
 
+    def agg(mask):
+        g = d[mask].groupby("data_date", as_index=False)[["clicks", "impressions", "sp"]].sum()
+        g["avg_position"] = g["sp"] / g["impressions"].where(g["impressions"] > 0) + 1  # same formula as the tables
+        return g
 
-def trend(d, y, title, zero=True):
-    fmt = ",.2f" if y == "avg_position" else ",d"
-    chart = (
-        alt.Chart(d)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("data_date:T", title="Date"),
-            y=alt.Y(f"{y}:Q", title=title, scale=alt.Scale(zero=zero), axis=alt.Axis(format=fmt)),
-            tooltip=["data_date:T", alt.Tooltip(f"{y}:Q", format=fmt)],
-        )
-        .properties(height=300)
-    )
-    st.altair_chart(chart, width="stretch")
+    return agg((day >= start) & (day <= end)), (agg((day >= cs) & (day <= ce)) if cmp else None)
 
 
 def trend_section(heading, col, left, right):
     """left/right are (value in `col`, label shown in chart titles)."""
-    st.header(heading)
-    for column, (value, name) in zip(st.columns(2), (left, right)):
-        d = series(col, value)
-        with column:
-            st.subheader(f"Clicks wrt Date ({name})")
-            trend(d, "clicks", "Clicks")
-            st.subheader(f"Impressions wrt Date ({name})")
-            trend(d, "impressions", "Impressions")
-            st.subheader(f"Avg Position wrt Date ({name})")
-            trend(d, "avg_position", "Avg Position", zero=False)
+    with st.container(border=True):
+        st.header(heading)
+        for column, (value, name) in zip(st.columns(2), (left, right)):
+            cur, other = series(col, value)
+            with column:
+                for y, title, zero, label in (("clicks", "Clicks", True, "Clicks"),
+                                              ("impressions", "Impressions", True, "Impressions"),
+                                              ("avg_position", "Avg Position", False, "Avg Position")):
+                    st.subheader(f"{label} wrt Date ({name})")
+                    trend_chart(cur, other, y, title, zero=zero, cur_start=start, other_start=cs)
 
 
 trend_section("Brand vs Non-Brand queries", "brand_non_brand", ("BRAND", "Branded"), ("NON-BRAND", "Non-Branded"))
