@@ -30,7 +30,8 @@ def render_global_filters() -> None:
             st.multiselect("Generic / Branded medicines", sorted(opts["gb"].unique()), placeholder="All",
                            key="g_gb")
             st.text_input("URL contains", placeholder="e.g. paracetamol", key="g_url")
-            st.text_input("URL does not contain", placeholder="e.g. /hi/", key="g_url_not")
+            st.multiselect("URL does not contain", [], accept_new_options=True, placeholder="Type a word, press Enter",
+                           key="g_url_not", help="Add one or more words; URLs containing any of them are excluded.")
             st.form_submit_button("Apply filters", type="primary", width="stretch")
         st.caption(f"Data available {min_d} to {max_d}")
 
@@ -61,9 +62,9 @@ def global_where(params: dict, p: str = "") -> str:
     if (ss.get("g_url") or "").strip():
         params["g_url"] = f"%{ss['g_url'].strip()}%"
         sql += f" AND {p}url ILIKE %(g_url)s"
-    if (ss.get("g_url_not") or "").strip():
-        params["g_url_not"] = f"%{ss['g_url_not'].strip()}%"
-        sql += f" AND {p}url NOT ILIKE %(g_url_not)s"
+    for i, term in enumerate(t.strip() for t in ss.get("g_url_not") or [] if t.strip()):
+        params[f"g_url_not{i}"] = f"%{term}%"
+        sql += f" AND {p}url NOT ILIKE %(g_url_not{i})s"
     return sql
 
 
