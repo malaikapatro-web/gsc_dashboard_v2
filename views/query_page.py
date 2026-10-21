@@ -24,17 +24,19 @@ if cmp:
 
 with st.sidebar:
     st.subheader("Query page filters")
-    search = st.text_input("Query contains", placeholder="e.g. dolo 650", key="q_search")
-    search_not = st.multiselect("Query does not contain", [], accept_new_options=True,
-                                placeholder="Type a word, press Enter", key="q_search_not",
-                                help="Add one or more words; queries containing any of them are excluded.")
-    hide_short = st.checkbox("Hide queries shorter than 4 characters", value=False,
-                             help="The original Power BI table hid these. Off here so no query is dropped.")
-    group_tail = st.checkbox(
-        "Group queries under 10 impressions as Long-tail", value=False, key="q_tail",
-        help="Same rule as the Power BI report: a query with fewer than 10 total impressions across all loaded "
-             "days is shown as 'Long-tail (low volume)'. Totals do not change.",
-    )
+    with st.form("query_filters", border=False):
+        search = st.text_input("Query contains", placeholder="e.g. dolo 650", key="q_search")
+        search_not = st.multiselect("Query does not contain", [], accept_new_options=True,
+                                    placeholder="Type a word, press Enter", key="q_search_not",
+                                    help="Add one or more words; queries containing any of them are excluded.")
+        hide_short = st.checkbox("Hide queries shorter than 4 characters", value=False,
+                                 help="The original Power BI table hid these. Off here so no query is dropped.")
+        group_tail = st.checkbox(
+            "Group queries under 10 impressions as Long-tail", value=False, key="q_tail",
+            help="Same rule as the Power BI report: a query with fewer than 10 total impressions across all loaded "
+                 "days is shown as 'Long-tail (low volume)'. Totals do not change.",
+        )
+        st.form_submit_button("Apply query filters", type="primary", width="stretch")
 
 
 def where(params: dict, p: str = "d.") -> str:
