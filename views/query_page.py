@@ -25,6 +25,7 @@ if cmp:
 with st.sidebar:
     st.subheader("Query page filters")
     search = st.text_input("Query contains", placeholder="e.g. dolo 650", key="q_search")
+    search_not = st.text_input("Query does not contain", placeholder="e.g. price", key="q_search_not")
     hide_short = st.checkbox("Hide queries shorter than 4 characters", value=False,
                              help="The original Power BI table hid these. Off here so no query is dropped.")
     group_tail = st.checkbox(
@@ -40,6 +41,10 @@ def where(params: dict, p: str = "d.") -> str:
     if search:
         params["q"] = f"%{search.strip()}%"
         sql += f" AND {p}query ILIKE %(q)s"
+    if search_not.strip():
+        params["q_not"] = f"%{search_not.strip()}%"
+        # COALESCE keeps anonymized rows (NULL query): they cannot contain the text, so they are not excluded.
+        sql += f" AND COALESCE({p}query, '') NOT ILIKE %(q_not)s"
     return sql
 
 
