@@ -30,6 +30,8 @@ def render_global_filters() -> None:
             st.multiselect("Generic / Branded medicines", sorted(opts["gb"].unique()), placeholder="All",
                            key="g_gb")
             st.text_input("URL contains", placeholder="e.g. paracetamol", key="g_url")
+            st.text_input("URL does not contain", placeholder="e.g. /hi/", key="g_url_not")
+            st.text_input("Query does not contain", placeholder="e.g. price", key="g_query_not")
             st.form_submit_button("Apply filters", type="primary", width="stretch")
         st.caption(f"Data available {min_d} to {max_d}")
 
@@ -60,6 +62,13 @@ def global_where(params: dict, p: str = "") -> str:
     if (ss.get("g_url") or "").strip():
         params["g_url"] = f"%{ss['g_url'].strip()}%"
         sql += f" AND {p}url ILIKE %(g_url)s"
+    if (ss.get("g_url_not") or "").strip():
+        params["g_url_not"] = f"%{ss['g_url_not'].strip()}%"
+        sql += f" AND {p}url NOT ILIKE %(g_url_not)s"
+    if (ss.get("g_query_not") or "").strip():
+        params["g_query_not"] = f"%{ss['g_query_not'].strip()}%"
+        # COALESCE keeps anonymized rows (NULL query): they cannot contain the text, so they are not excluded.
+        sql += f" AND COALESCE({p}query, '') NOT ILIKE %(g_query_not)s"
     return sql
 
 
