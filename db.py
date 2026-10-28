@@ -80,14 +80,32 @@ def _execute(sql: str, params: dict) -> pd.DataFrame:
         cur.close()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def data_version() -> str:
+    """Changes whenever GSC_DB_TABLE is refreshed, so cached results are dropped as soon as new data lands instead
+    of after a fixed 6-hour window. Falls back to that 6-hour window if the table's metadata cannot be read."""
+    try:
+        db, schema = SCHEMA.split(".")
+        df = _execute(f"SELECT LAST_ALTERED FROM {db}.INFORMATION_SCHEMA.TABLES "
+                      f"WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = 'GSC_DB_TABLE'", {})
+        if len(df) and df.iloc[0, 0] is not None:
+            return str(df.iloc[0, 0])
+    except Exception:
+        pass
+    return f"t{int(time.time() // (6 * 3600))}"
+
+
 @st.cache_data(ttl=6 * 3600, max_entries=200, show_spinner=False)  # max_entries keeps memory bounded on Community Cloud
-def run_query(sql: str, params: dict | None = None) -> pd.DataFrame:
-    params = params or {}
+def _run_query_cached(sql: str, params: dict, version: str) -> pd.DataFrame:
     try:
         return _execute(sql, params)
     except snowflake.connector.errors.Error:
         _connection.clear()  # session may have expired; reconnect once
         return _execute(sql, params)
+
+
+def run_query(sql: str, params: dict | None = None) -> pd.DataFrame:
+    return _run_query_cached(sql, params or {}, data_version())
 
 
 SCRATCH = "MARKETING_BRONZE_DB.STAGING"  # default; override with scratch_schema in secrets. Temp tables only.
@@ -103,7 +121,7 @@ def _scratch_registry() -> dict:
 def materialize(prefix: str, select_sql: str, params: dict | None = None) -> str:
     """Create (once) a session-temporary Snowflake table holding select_sql; return its name."""
     params = params or {}
-    fresh = int(time.time() // (6 * 3600))  # rebuild after the daily refresh window
+    fresh = data_version()  # rebuild when the table has been refreshed
     key = hashlib.md5(f"{select_sql}{sorted(params.items())}{fresh}".encode()).hexdigest()[:12]
     name = f"{_config().get('scratch_schema', SCRATCH)}.TMP_{prefix}_{key}"
     reg, conn = _scratch_registry(), _connection()
